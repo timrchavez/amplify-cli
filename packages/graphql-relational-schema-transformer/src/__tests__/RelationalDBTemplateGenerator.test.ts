@@ -17,7 +17,7 @@ const schema = parse(`
   }
 `);
 
-let simplePrimaryKeyMap = new Map<string, string>();
+let simplePrimaryKeyMap = new Map<string, string[]>();
 let simpleStringFieldMap = new Map<string, string[]>();
 let simpleIntFieldMap = new Map<string, string[]>();
 let context = new TemplateContext(schema, simplePrimaryKeyMap, simpleStringFieldMap, simpleIntFieldMap);

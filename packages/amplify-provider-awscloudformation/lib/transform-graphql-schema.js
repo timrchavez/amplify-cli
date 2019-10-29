@@ -326,6 +326,7 @@ async function transformGraphQLSchema(context, options) {
     isCLIMigration,
     cloudBackendDirectory: previouslyDeployedBackendDir,
   };
+
   if (isCLIMigration && isOldApiVersion) {
     return await migrateProject(context, migrateOptions);
   } else if (isOldApiVersion) {
@@ -406,6 +407,7 @@ async function transformGraphQLSchema(context, options) {
 
   // Check for common errors
   const directiveMap = collectDirectivesByTypeNames(project.schema);
+
   warnOnAuth(context, directiveMap.types);
 
   await transformerVersionCheck(context, resourceDir, previouslyDeployedBackendDir, resourcesToBeUpdated, directiveMap.directives);

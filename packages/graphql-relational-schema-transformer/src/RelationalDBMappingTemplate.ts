@@ -1,4 +1,4 @@
-import { obj, str, ObjectNode, ListNode } from 'graphql-mapping-template';
+import { obj, str, ObjectNode, ListNode, ReferenceNode } from 'graphql-mapping-template';
 
 /**
  * The class that contains the resolver templates for interacting
@@ -8,7 +8,8 @@ export class RelationalDBMappingTemplate {
   /**
    * Provided a SQL statement, creates the rds-query item resolver template.
    *
-   * @param param0 - the SQL statement to use when querying the RDS cluster
+   * @param param0 - the SQL statement(s) to use when querying the RDS cluster
+   * @param param1 - the variable map to use inject values into the SQL statement(s)
    */
   public static rdsQuery({ statements }: { statements: ListNode }): ObjectNode {
     return obj({

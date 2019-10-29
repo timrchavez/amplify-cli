@@ -38,5 +38,6 @@ export class ResourceConstants {
     rdsClusterIdentifier: 'rdsClusterIdentifier',
     rdsSecretStoreArn: 'rdsSecretStoreArn',
     rdsDatabaseName: 'rdsDatabaseName',
+    rdsDatabaseSchemas: 'rdsDatabaseSchemas',
   };
 }

@@ -6,7 +6,6 @@ import {
   getNamedType,
   getNonNullType,
   getInputValueDefinition,
-  getGraphQLTypeFromMySQLType,
   getTypeDefinition,
   getFieldDefinition,
   getInputTypeDefinition,
@@ -32,7 +31,7 @@ function getTableContext(tableName: string): TableContext {
   const formattedTableName = toUpper(tableName);
 
   for (const fieldName of stringFieldList) {
-    const baseType = getNamedType(getGraphQLTypeFromMySQLType(primaryKeyType));
+    const baseType = getNamedType('String');
 
     const type = getNonNullType(baseType);
     fields.push(getFieldDefinition(fieldName, type));
@@ -51,8 +50,8 @@ function getTableContext(tableName: string): TableContext {
     getTypeDefinition(fields, tableName),
     getInputTypeDefinition(createFields, `Create${formattedTableName}Input`),
     getInputTypeDefinition(updateFields, `Update${formattedTableName}Input`),
-    primaryKey,
-    primaryKeyType,
+    [primaryKey],
+    [primaryKeyType],
     stringFieldList,
     []
   );
@@ -88,9 +87,10 @@ test('Test schema generation end to end', async () => {
   expect(mockReader.describeTable).toHaveBeenCalledWith(mockTableDName);
   expect(templateContext.schemaDoc).toBeDefined();
   expect(templateContext.schemaDoc.kind).toBe(Kind.DOCUMENT);
-  // 4 tables * (base, update input, and create input) + schema, queries, mutations, and subs
+  // 4 tables * (base, update input, create input, keys, connection) + schema, queries, mutations, and subs
   // (4 * 3) + 4 = 16
-  expect(templateContext.schemaDoc.definitions.length).toBe(16);
+
+  expect(templateContext.schemaDoc.definitions.length).toBe(24);
   let objectTypeCount = 0;
   let inputTypeCount = 0;
   let schemaTypeCount = 0;
@@ -103,12 +103,12 @@ test('Test schema generation end to end', async () => {
       schemaTypeCount++;
     }
   }
+
   expect(schemaTypeCount).toEqual(1); // Singular schema node
   expect(inputTypeCount).toEqual(8); // 4 tables * (update input + create input)
-  expect(objectTypeCount).toEqual(7); // (4 tables * base shape) + queries + mutations + subs
+  expect(objectTypeCount).toEqual(15); // (4 tablecs * base shape) + queries + mutations + subs
   const schemaString = print(templateContext.schemaDoc);
   expect(schemaString).toBeDefined();
-  console.log(schemaString);
 });
 
 test('Test list tables fails', async () => {
@@ -162,16 +162,6 @@ test('Test describe table fails', async () => {
 
   expect(mockReader.listTables).toHaveBeenCalled();
   expect(mockReader.describeTable).toHaveBeenCalledWith(mockTableAName);
-});
-
-test('Test connection type shape', () => {
-  const testType = 'type name';
-  const MockRelationalDBReader = jest.fn<IRelationalDBReader>(() => ({}));
-  const mockReader = new MockRelationalDBReader();
-  const dummyTransformer = new RelationalDBSchemaTransformer(mockReader, testDBName);
-  const connectionType = dummyTransformer.getConnectionType(testType);
-  expect(connectionType.fields.length).toEqual(2);
-  expect(connectionType.name.value).toEqual(`${testType}Connection`);
 });
 
 test('Test schema type node creation', () => {

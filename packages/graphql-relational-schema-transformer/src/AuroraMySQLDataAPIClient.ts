@@ -1,8 +1,10 @@
+import { IAuroraDataAPIClient, DataApiParams } from './IAuroraDataAPIClient';
+
 /**
  * A wrapper around the RDS data service client, forming their responses for
  * easier consumption.
  */
-export class AuroraDataAPIClient {
+export class AuroraMySQLDataAPIClient implements IAuroraDataAPIClient {
   AWS: any;
   RDS: any;
   Params: DataApiParams;
@@ -55,7 +57,7 @@ export class AuroraDataAPIClient {
     const listOfColumns = response['records'];
     let columnDescriptions = [];
     for (const column of listOfColumns) {
-      let colDescription = new ColumnDescription();
+      let colDescription = new MySQLColumnDescription();
 
       colDescription.Field = column[MYSQL_DESCRIBE_TABLE_ORDER.Field]['stringValue'];
       colDescription.Type = column[MYSQL_DESCRIBE_TABLE_ORDER.Type]['stringValue'];
@@ -77,29 +79,23 @@ export class AuroraDataAPIClient {
    * @return a list of tables referencing the provided table, if any exist.
    */
   public getTableForeignKeyReferences = async (tableName: string) => {
-    this.Params.sql = `SELECT TABLE_NAME FROM information_schema.key_column_usage 
-            WHERE referenced_table_name is not null 
-            AND REFERENCED_TABLE_NAME = '${tableName}';`;
+    this.Params.sql = `SELECT TABLE_NAME FROM information_schema.key_column_usage
+      WHERE referenced_table_name is not null
+      AND REFERENCED_TABLE_NAME = '${tableName}';`;
     const response = await this.RDS.executeStatement(this.Params).promise();
 
-    let tableList = [];
+    let relationshipsOnMe = new Map<string, string[]>();
     const records = response['records'];
     for (const record of records) {
-      tableList.push(record[0]['stringValue']);
+      // NOTE: relationships are not implemented for MySQL, so ignore the column mapping
+      relationshipsOnMe.set(record[0]['stringValue'], []);
     }
 
-    return tableList;
+    return [new Map(), new Map([[tableName, relationshipsOnMe]])];
   };
 }
 
-export class DataApiParams {
-  database: string;
-  secretArn: string;
-  resourceArn: string;
-  sql: string;
-}
-
-export class ColumnDescription {
+export class MySQLColumnDescription {
   Field: string;
   Type: string;
   Null: string;

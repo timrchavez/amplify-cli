@@ -1,11 +1,11 @@
 import { ResourceConstants } from './ResourceConstants';
 import DataSource from 'cloudform-types/types/appSync/dataSource';
 import IAM from 'cloudform-types/types/iam';
-import { default as cloudform } from 'cloudform';
-import { Fn, StringParameter } from 'cloudform-types';
+
+import cloudform, { Fn, StringParameter } from 'cloudform';
+import Template from 'cloudform-types/types/template';
 import { TemplateContext } from './RelationalDBSchemaTransformer';
 import { RelationalDBResolverGenerator } from './RelationalDBResolverGenerator';
-import Template from 'cloudform-types/types/template';
 
 /**
  * This is the Class responsible for generating and managing the CloudForm template
@@ -104,6 +104,9 @@ export class RelationalDBTemplateGenerator {
       [ResourceConstants.PARAMETERS.rdsDatabaseName]: new StringParameter({
         Description: 'The name of the database within the RDS cluster to use.',
       }),
+      [ResourceConstants.PARAMETERS.rdsDatabaseSchemas]: new StringParameter({
+        Description: 'The schema names within the database to use.',
+      }),
     };
   }
 
@@ -118,7 +121,7 @@ export class RelationalDBTemplateGenerator {
    */
   private makeIAMDataSourceRole() {
     return new IAM.Role({
-      RoleName: Fn.Join('-', ['role', Fn.Ref(ResourceConstants.PARAMETERS.AppSyncApiId), Fn.Ref(ResourceConstants.PARAMETERS.Env)]),
+      RoleName: Fn.Join('-', ['rds', 'role', Fn.Ref(ResourceConstants.PARAMETERS.AppSyncApiId), Fn.Ref(ResourceConstants.PARAMETERS.Env)]),
 
       AssumeRolePolicyDocument: {
         Version: '2012-10-17',

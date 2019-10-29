@@ -1,4 +1,5 @@
-import { DataApiParams, AuroraDataAPIClient } from '../AuroraDataAPIClient';
+import { AuroraMySQLDataAPIClient } from '../AuroraMySQLDataAPIClient';
+import { DataApiParams } from '../IAuroraDataAPIClient';
 
 const region = 'us-east-1';
 const secretStoreArn = 'secretStoreArn';
@@ -61,7 +62,7 @@ test('Test list tables', async () => {
 
   const aws = require('aws-sdk');
 
-  const testClient = new AuroraDataAPIClient(region, secretStoreArn, clusterArn, databaseName, aws);
+  const testClient = new AuroraMySQLDataAPIClient(region, secretStoreArn, clusterArn, databaseName, aws);
   const mockRDS = new MockRDSClient();
   testClient.setRDSClient(mockRDS);
 
@@ -130,13 +131,19 @@ test('Test foreign key lookup', async () => {
   }));
 
   const aws = require('aws-sdk');
-  const testClient = new AuroraDataAPIClient(region, secretStoreArn, clusterArn, databaseName, aws);
+  const testClient = new AuroraMySQLDataAPIClient(region, secretStoreArn, clusterArn, databaseName, aws);
   const mockRDS = new MockRDSClient();
   testClient.setRDSClient(mockRDS);
 
-  const tables = await testClient.getTableForeignKeyReferences(tableBName);
-  expect(tables.length).toEqual(1);
-  expect(tables[0]).toEqual(tableAName);
+  const [_, relationshipsOnMe] = await testClient.getTableForeignKeyReferences(tableBName);
+  expect(relationshipsOnMe.size).toEqual(1);
+  expect(
+    relationshipsOnMe
+      .values()
+      .next()
+      .value.keys()
+      .next().value
+  ).toEqual(tableAName);
 });
 
 test('Test describe table', async () => {
@@ -448,7 +455,7 @@ test('Test describe table', async () => {
   }));
 
   const aws = require('aws-sdk');
-  const testClient = new AuroraDataAPIClient(region, secretStoreArn, clusterArn, databaseName, aws);
+  const testClient = new AuroraMySQLDataAPIClient(region, secretStoreArn, clusterArn, databaseName, aws);
   const mockRDS = new MockRDSClient();
   testClient.setRDSClient(mockRDS);
 

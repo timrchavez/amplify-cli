@@ -7,7 +7,7 @@ import { TemplateContext, TableContext } from './RelationalDBSchemaTransformer';
 export interface IRelationalDBReader {
   listTables(): Promise<string[]>;
 
-  getTableForeignKeyReferences(tableName: string): Promise<string[]>;
+  getTableForeignKeyReferences?(tableName: string): Promise<Map<string, string[]>[]>;
 
   describeTable(tableName: string): Promise<TableContext>;
 

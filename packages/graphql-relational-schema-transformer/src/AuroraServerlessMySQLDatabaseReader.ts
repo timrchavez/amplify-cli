@@ -3,32 +3,32 @@ import {
   getNamedType,
   getNonNullType,
   getInputValueDefinition,
-  getGraphQLTypeFromMySQLType,
   getTypeDefinition,
   getFieldDefinition,
   getInputTypeDefinition,
 } from './RelationalDBSchemaTransformerUtils';
-import { AuroraDataAPIClient } from './AuroraDataAPIClient';
+import { AuroraMySQLDataAPIClient } from './AuroraMySQLDataAPIClient';
+import { IAuroraDataAPIClient } from './IAuroraDataAPIClient';
 import { IRelationalDBReader } from './IRelationalDBReader';
-import { toUpper } from 'graphql-transformer-common';
+import { toPascalCase } from 'graphql-transformer-common';
 
 /**
  * A class to manage interactions with a Aurora Serverless MySQL Relational Databse
  * using the Aurora Data API
  */
 export class AuroraServerlessMySQLDatabaseReader implements IRelationalDBReader {
-  auroraClient: AuroraDataAPIClient;
+  auroraClient: AuroraMySQLDataAPIClient;
   dbRegion: string;
   awsSecretStoreArn: string;
   dbClusterOrInstanceArn: string;
   database: string;
 
-  setAuroraClient(auroraClient: AuroraDataAPIClient) {
+  setAuroraClient(auroraClient: IAuroraDataAPIClient) {
     this.auroraClient = auroraClient;
   }
 
   constructor(dbRegion: string, awsSecretStoreArn: string, dbClusterOrInstanceArn: string, database: string, aws: any) {
-    this.auroraClient = new AuroraDataAPIClient(dbRegion, awsSecretStoreArn, dbClusterOrInstanceArn, database, aws);
+    this.auroraClient = new AuroraMySQLDataAPIClient(dbRegion, awsSecretStoreArn, dbClusterOrInstanceArn, database, aws);
     this.dbRegion = dbRegion;
     this.awsSecretStoreArn = awsSecretStoreArn;
     this.dbClusterOrInstanceArn = dbClusterOrInstanceArn;
@@ -66,15 +66,14 @@ export class AuroraServerlessMySQLDatabaseReader implements IRelationalDBReader 
   };
 
   /**
-   * Looks up any foreign key constraints that might exist for the provided table.
-   * This is done to ensure our generated schema includes nested types, where possible.
+   * Looks up any foreign key constraints that might exist from the provided table.
+   * This is done to make solving many-to-many relationships possible.
    *
    * @param tableName the name of the table to be checked for foreign key constraints.
    * @returns a list of table names that are applicable as having constraints.
    */
-  getTableForeignKeyReferences = async (tableName: string): Promise<string[]> => {
-    const results = await this.auroraClient.getTableForeignKeyReferences(tableName);
-    return results;
+  getTableForeignKeyReferences = async (tableName: string): Promise<Map<string, string[]>[]> => {
+    return await this.auroraClient.getTableForeignKeyReferences(tableName);
   };
 
   /**
@@ -106,7 +105,7 @@ export class AuroraServerlessMySQLDatabaseReader implements IRelationalDBReader 
     const intFieldList = new Array();
     const stringFieldList = new Array();
 
-    const formattedTableName = toUpper(tableName);
+    const formattedTableName = toPascalCase(tableName.split('.'));
 
     for (const columnDescription of columnDescriptions) {
       // If a field is the primary key, save it.
@@ -165,10 +164,42 @@ export class AuroraServerlessMySQLDatabaseReader implements IRelationalDBReader 
       getTypeDefinition(fields, tableName),
       getInputTypeDefinition(createFields, `Create${formattedTableName}Input`),
       getInputTypeDefinition(updateFields, `Update${formattedTableName}Input`),
-      primaryKey,
-      primaryKeyType,
+      new Array(primaryKey),
+      new Array(primaryKeyType),
       stringFieldList,
       intFieldList
     );
   };
+}
+
+const intTypes = [`INTEGER`, `INT`, `SMALLINT`, `TINYINT`, `MEDIUMINT`, `BIGINT`, `BIT`];
+const floatTypes = [`FLOAT`, `DOUBLE`, `REAL`, `REAL_AS_FLOAT`, `DOUBLE PRECISION`, `DEC`, `DECIMAL`, `FIXED`, `NUMERIC`];
+
+/**
+ * Given the MySQL DB type for a column, make a best effort to select the appropriate GraphQL type for
+ * the corresponding field.
+ *
+ * @param dbType the SQL column type.
+ * @returns the GraphQL field type.
+ */
+export function getGraphQLTypeFromMySQLType(dbType: string): string {
+  const normalizedType = dbType.toUpperCase().split('(')[0];
+  if (`BOOL` == normalizedType) {
+    return `Boolean`;
+  } else if (`JSON` == normalizedType) {
+    return `AWSJSON`;
+  } else if (`TIME` == normalizedType) {
+    return `AWSTime`;
+  } else if (`DATE` == normalizedType) {
+    return `AWSDate`;
+  } else if (`DATETIME` == normalizedType) {
+    return `AWSDateTime`;
+  } else if (`TIMESTAMP` == normalizedType) {
+    return `AWSTimestamp`;
+  } else if (intTypes.indexOf(normalizedType) > -1) {
+    return `Int`;
+  } else if (floatTypes.indexOf(normalizedType) > -1) {
+    return `Float`;
+  }
+  return `String`;
 }

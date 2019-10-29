@@ -49,21 +49,33 @@ async function serviceWalkthrough(context, defaultValuesFilename, datasourceMeta
   });
 
   // RDS Cluster Question
-  const { selectedClusterArn, clusterResourceId } = await selectCluster(context, inputs, AWS);
+  const { selectedClusterArn, clusterResourceId, selectedClusterEngine } = await selectCluster(context, inputs, AWS);
 
   // Secret Store Question
   const selectedSecretArn = await getSecretStoreArn(context, inputs, clusterResourceId, AWS);
 
   // Database Name Question
-  const selectedDatabase = await selectDatabase(context, inputs, selectedClusterArn, selectedSecretArn, AWS);
+  const selectedDatabase = await selectDatabase(context, inputs, selectedClusterArn, selectedClusterEngine, selectedSecretArn, AWS);
 
-  return {
+  const answers = {
     region: selectedRegion,
     dbClusterArn: selectedClusterArn,
     secretStoreArn: selectedSecretArn,
     databaseName: selectedDatabase,
+    databaseEngine: selectedClusterEngine,
     resourceName: appSyncApi,
+    databaseSchemas: [],
   };
+
+  // PostgreSQL further partitions databases into namespaces called "schemas"
+  if (selectedClusterEngine === 'aurora-postgresql') {
+    // Scheme Name Question
+    // FIXME(timrc): Support defaults (e.g. default to 'public')
+    const selectedSchemas = await selectSchemas(context, inputs, selectedClusterArn, selectedSecretArn, selectedDatabase, AWS);
+    answers.databaseSchemas = selectedSchemas;
+  }
+
+  return answers;
 }
 
 /**
@@ -86,10 +98,10 @@ async function selectCluster(context, inputs, AWS) {
   if (clusters.size > 0) {
     const clusterIdentifier = await promptWalkthroughQuestion(inputs, 1, Array.from(clusters.keys()));
     const selectedCluster = clusters.get(clusterIdentifier);
-
     return {
       selectedClusterArn: selectedCluster.DBClusterArn,
       clusterResourceId: selectedCluster.DbClusterResourceId,
+      selectedClusterEngine: selectedCluster.Engine,
     };
   }
   context.print.error('No properly configured Aurora Serverless clusters found.');
@@ -150,21 +162,33 @@ async function getSecretStoreArn(context, inputs, clusterResourceId, AWS) {
   return selectedSecretArn;
 }
 
+function listDatabasesSql(clusterEngine) {
+  if (clusterEngine === 'aurora-postgresql') {
+    return 'SELECT datname FROM pg_database WHERE datistemplate = false';
+  }
+  return 'SHOW databases';
+}
+
 /**
  *
  * @param {*} inputs
  * @param {*} clusterArn
  * @param {*} secretArn
  */
-async function selectDatabase(context, inputs, clusterArn, secretArn, AWS) {
+async function selectDatabase(context, inputs, clusterArn, clusterEngine, secretArn, AWS) {
   // Database Name Question
   const DataApi = new AWS.RDSDataService();
   const params = new DataApiParams();
+  const ignoreDatabases = {
+    'aurora-postgresql': ['rdsadmin', 'postgres'],
+    'aurora-mysql': ['information_schema', 'performance_schema', 'mysql'],
+  };
   params.secretArn = secretArn;
   params.resourceArn = clusterArn;
-  params.sql = 'SHOW databases';
+  params.sql = listDatabasesSql(clusterEngine);
 
   spinner.start('Fetching Aurora Serverless cluster...');
+
   const dataApiResult = await DataApi.executeStatement(params).promise();
 
   // eslint-disable-next-line prefer-destructuring
@@ -174,7 +198,7 @@ async function selectDatabase(context, inputs, clusterArn, secretArn, AWS) {
   for (let i = 0; i < records.length; i += 1) {
     const recordValue = records[i][0].stringValue;
     // ignore the three meta tables that the cluster creates
-    if (!['information_schema', 'performance_schema', 'mysql'].includes(recordValue)) {
+    if (!ignoreDatabases[clusterEngine].includes(recordValue)) {
       databaseList.push(recordValue);
     }
   }
@@ -189,23 +213,75 @@ async function selectDatabase(context, inputs, clusterArn, secretArn, AWS) {
   process.exit(0);
 }
 
+function listSchemasSql() {
+  return 'SELECT schema_name FROM information_schema.schemata;';
+}
+
+/**
+ *
+ * @param {*} inputs
+ * @param {*} clusterArn
+ * @param {*} secretArn
+ * @param {*} database
+ */
+async function selectSchemas(context, inputs, clusterArn, secretArn, database, AWS) {
+  // Database Name Question
+  const DataApi = new AWS.RDSDataService();
+  const params = new DataApiParams();
+  params.secretArn = secretArn;
+  params.resourceArn = clusterArn;
+  params.database = database;
+  params.sql = listSchemasSql();
+
+  spinner.start('Fetching database schemas...');
+  const dataApiResult = await DataApi.executeStatement(params).promise();
+
+  // eslint-disable-next-line prefer-destructuring
+  const records = dataApiResult.records;
+  const schemaList = [];
+
+  for (let i = 0; i < records.length; i += 1) {
+    const recordValue = records[i][0].stringValue;
+    // ignore these schemas that the cluster creates
+    if (!['information_schema', 'pg_catalog'].includes(recordValue)) {
+      schemaList.push(recordValue);
+    }
+  }
+
+  spinner.succeed('Fetched database schemas.');
+
+  if (schemaList.length > 0) {
+    return await promptWalkthroughQuestion(inputs, 4, schemaList);
+  }
+
+  context.print.error('No valid database schemas found.');
+  process.exit(0);
+}
+
 /**
  *
  * @param {*} inputs
  * @param {*} questionNumber
  * @param {*} choicesList
+ * @param {*} defaultsList
  */
 async function promptWalkthroughQuestion(inputs, questionNumber, choicesList) {
+  let defaultsList = [];
+  if ('selectFirst' in inputs[questionNumber] && inputs[questionNumber].selectFirst && choicesList.length > 0) {
+    defaultsList = [choicesList[0]];
+  }
   const question = [
     {
       type: inputs[questionNumber].type,
       name: inputs[questionNumber].key,
       message: inputs[questionNumber].question,
       choices: choicesList,
+      default: defaultsList,
     },
   ];
 
   const answer = await inquirer.prompt(question);
+
   return answer[inputs[questionNumber].key];
 }
 

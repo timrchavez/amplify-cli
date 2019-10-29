@@ -2,7 +2,7 @@ export function plurality(val: string): string {
   if (!val.trim()) {
     return '';
   }
-  return val.concat('s');
+  return val.slice(-1) === 's' ? val : val.concat('s');
 }
 
 export function graphqlName(val: string): string {
@@ -37,6 +37,11 @@ export function toCamelCase(words: string[]): string {
 export function toPascalCase(words: string[]): string {
   const formatted = words.map((w, i) => w.charAt(0).toUpperCase() + w.slice(1));
   return formatted.join('');
+}
+
+export function toSnakeCase(words: string[]): string {
+  const formatted = words.map(word => word.toLowerCase());
+  return formatted.join('_');
 }
 
 export const NONE_VALUE = '___xamznone____';

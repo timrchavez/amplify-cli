@@ -43,6 +43,8 @@ interface RelationArguments {
   fields: string[];
 }
 
+// timrchavez - COME BACK TO HERE
+
 function makeConnectionAttributeName(type: string, field?: string) {
   // The same logic is used in amplify-codegen-appsync-model-plugin package to generate association field
   // Make sure the logic gets update in that package

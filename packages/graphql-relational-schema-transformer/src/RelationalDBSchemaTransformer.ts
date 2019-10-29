@@ -5,13 +5,17 @@ import {
   getNonNullType,
   getInputValueDefinition,
   getTypeDefinition,
-  getFieldDefinition,
   getDirectiveNode,
   getOperationTypeDefinition,
+  getConnectionTypeDefinition,
+  getKeysTypeDefinition,
+  getListType,
 } from './RelationalDBSchemaTransformerUtils';
 import { RelationalDBParsingException } from './RelationalDBParsingException';
 import { IRelationalDBReader } from './IRelationalDBReader';
-import { toUpper } from 'graphql-transformer-common';
+import { toPascalCase } from 'graphql-transformer-common';
+import { plural } from 'pluralize';
+import { string } from 'prop-types';
 
 /**
  * This class is used to transition all of the columns and key metadata from a table for use
@@ -23,26 +27,32 @@ export class TableContext {
   createTypeDefinition: InputObjectTypeDefinitionNode;
   updateTypeDefinition: InputObjectTypeDefinitionNode;
   // Table primary key metadata, to help properly key queries and mutations.
-  tableKeyField: string;
-  tableKeyFieldType: string;
+  tableKeyFields: string[];
+  tableKeyFieldTypes: string[];
   stringFieldList: string[];
   intFieldList: string[];
+  keysInputDefinition: InputObjectTypeDefinitionNode;
+  relationshipData: Map<string, Map<string, string[]>[]>;
   constructor(
     typeDefinition: ObjectTypeDefinitionNode,
     createDefinition: InputObjectTypeDefinitionNode,
     updateDefinition: InputObjectTypeDefinitionNode,
-    primaryKeyField: string,
-    primaryKeyType: string,
+    primaryKeyFields: string[],
+    primaryKeyTypes: string[],
     stringFieldList: string[],
-    intFieldList: string[]
+    intFieldList: string[],
+    keysInputDefinition?: InputObjectTypeDefinitionNode,
+    relationshipData?: Map<string, Map<string, string[]>[]>
   ) {
     this.tableTypeDefinition = typeDefinition;
-    this.tableKeyField = primaryKeyField;
+    this.tableKeyFields = primaryKeyFields;
     this.createTypeDefinition = createDefinition;
     this.updateTypeDefinition = updateDefinition;
-    this.tableKeyFieldType = primaryKeyType;
+    this.tableKeyFieldTypes = primaryKeyTypes;
     this.stringFieldList = stringFieldList;
     this.intFieldList = intFieldList;
+    this.keysInputDefinition = keysInputDefinition;
+    this.relationshipData = relationshipData;
   }
 }
 
@@ -55,8 +65,8 @@ export class TableContext {
  */
 export class TemplateContext {
   schemaDoc: DocumentNode;
-  typePrimaryKeyMap: Map<string, string>;
-  typePrimaryKeyTypeMap: Map<string, string>;
+  typePrimaryKeyMap: Map<string, string[]>;
+  typePrimaryKeyTypeMap: Map<string, string[]>;
   stringFieldMap: Map<string, string[]>;
   intFieldMap: Map<string, string[]>;
   secretStoreArn: string;
@@ -64,19 +74,22 @@ export class TemplateContext {
   databaseName: string;
   databaseSchema: string;
   region: string;
+  relationshipData: Map<string, Map<string, string[]>[]>;
 
   constructor(
     schemaDoc: DocumentNode,
-    typePrimaryKeyMap: Map<string, string>,
+    typePrimaryKeyMap: Map<string, string[]>,
     stringFieldMap: Map<string, string[]>,
     intFieldMap: Map<string, string[]>,
-    typePrimaryKeyTypeMap?: Map<string, string>
+    typePrimaryKeyTypeMap?: Map<string, string[]>,
+    relationshipData?: Map<string, Map<string, string[]>[]>
   ) {
     this.schemaDoc = schemaDoc;
-    this.typePrimaryKeyMap = typePrimaryKeyMap;
     this.stringFieldMap = stringFieldMap;
     this.intFieldMap = intFieldMap;
+    this.typePrimaryKeyMap = typePrimaryKeyMap;
     this.typePrimaryKeyTypeMap = typePrimaryKeyTypeMap;
+    this.relationshipData = relationshipData;
   }
 }
 
@@ -100,10 +113,11 @@ export class RelationalDBSchemaTransformer {
 
     let typeContexts = new Array();
     let types = new Array();
-    let pkeyMap = new Map<string, string>();
-    let pkeyTypeMap = new Map<string, string>();
+    let pkeyMap = new Map<string, string[]>();
+    let pkeyTypeMap = new Map<string, string[]>();
     let stringFieldMap = new Map<string, string[]>();
     let intFieldMap = new Map<string, string[]>();
+    let relationshipData = new Map<string, Map<string, string[]>[]>();
 
     for (const tableName of tableNames) {
       let type: TableContext = null;
@@ -115,38 +129,44 @@ export class RelationalDBSchemaTransformer {
 
       // NOTE from @mikeparisstuff. The GraphQL schema generation breaks
       // when the table does not have an explicit primary key.
-      if (type.tableKeyField) {
+      if (type && type.tableKeyFields.length > 0) {
         typeContexts.push(type);
-        // Generate the 'connection' type for each table type definition
-        // TODO: Determine if Connection is needed as Data API doesn't provide pagination
-        // TODO: As we add different db sources, we should conditionally do this even if we don't for Aurora serverless.
-        //types.push(this.getConnectionType(tableName))
+        const formattedTableName = toPascalCase(tableName.split('.').map(word => word.replace(/[^A-Za-z0-9]/g, '')));
+        types.push(getKeysTypeDefinition(formattedTableName, type.tableKeyFields, type.tableKeyFieldTypes));
+        types.push(getConnectionTypeDefinition(formattedTableName));
         // Generate the create operation input for each table type definition
         types.push(type.createTypeDefinition);
         // Generate the default shape for the table's structure
         types.push(type.tableTypeDefinition);
         // Generate the update operation input for each table type definition
         types.push(type.updateTypeDefinition);
+        // Generate the keys inputs for each table type definition
+        if (type.keysInputDefinition) {
+          types.push(type.keysInputDefinition);
+        }
 
         // Update the field map with the new field lists for the current table
         stringFieldMap.set(tableName, type.stringFieldList);
         intFieldMap.set(tableName, type.intFieldList);
-        pkeyMap.set(tableName, type.tableKeyField);
-        pkeyTypeMap.set(tableName, type.tableKeyFieldType);
+        pkeyMap.set(tableName, type.tableKeyFields);
+        pkeyTypeMap.set(tableName, type.tableKeyFieldTypes);
+        relationshipData.set(tableName, type.relationshipData ? type.relationshipData.get(tableName) : [new Map(), new Map()]);
       } else {
+        console.log(`Skipping table ${type.tableTypeDefinition.name.value}`);
         console.warn(`Skipping table ${type.tableTypeDefinition.name.value} because it does not have a single PRIMARY KEY.`);
       }
     }
 
     // Generate the mutations and queries based on the table structures
     types.push(this.getMutations(typeContexts));
-    types.push(this.getQueries(typeContexts));
+    types.push(this.getQueries(typeContexts)); // timrchavez
     types.push(this.getSubscriptions(typeContexts));
     types.push(this.getSchemaType());
 
     let context = this.dbReader.hydrateTemplateContext(
-      new TemplateContext({ kind: Kind.DOCUMENT, definitions: types }, pkeyMap, stringFieldMap, intFieldMap, pkeyTypeMap)
+      new TemplateContext({ kind: Kind.DOCUMENT, definitions: types }, pkeyMap, stringFieldMap, intFieldMap, pkeyTypeMap, relationshipData)
     );
+
     return context;
   };
 
@@ -178,11 +198,13 @@ export class RelationalDBSchemaTransformer {
     const fields = [];
     for (const typeContext of types) {
       const type = typeContext.tableTypeDefinition;
-      const formattedTypeValue = toUpper(type.name.value);
+      const formattedTypeValue = toPascalCase(type.name.value.split('.'));
       fields.push(
         getOperationFieldDefinition(
           `delete${formattedTypeValue}`,
-          [getInputValueDefinition(getNonNullType(getNamedType(typeContext.tableKeyFieldType)), typeContext.tableKeyField)],
+          typeContext.tableKeyFields.map((tableKeyField, pos) => {
+            return getInputValueDefinition(getNonNullType(getNamedType(typeContext.tableKeyFieldTypes[pos])), tableKeyField);
+          }),
           getNamedType(`${type.name.value}`),
           null
         )
@@ -218,7 +240,7 @@ export class RelationalDBSchemaTransformer {
     const fields = [];
     for (const typeContext of types) {
       const type = typeContext.tableTypeDefinition;
-      const formattedTypeValue = toUpper(type.name.value);
+      const formattedTypeValue = toPascalCase(type.name.value.split('.'));
       fields.push(
         getOperationFieldDefinition(`onCreate${formattedTypeValue}`, [], getNamedType(`${type.name.value}`), [
           getDirectiveNode(`create${formattedTypeValue}`),
@@ -239,30 +261,40 @@ export class RelationalDBSchemaTransformer {
     const fields = [];
     for (const typeContext of types) {
       const type = typeContext.tableTypeDefinition;
-      const formattedTypeValue = toUpper(type.name.value);
+      const formattedTypeValue = toPascalCase(type.name.value.split('.'));
       fields.push(
         getOperationFieldDefinition(
           `get${formattedTypeValue}`,
-          [getInputValueDefinition(getNonNullType(getNamedType(typeContext.tableKeyFieldType)), typeContext.tableKeyField)],
+          typeContext.tableKeyFields.map((tableKeyField, pos) => {
+            return getInputValueDefinition(getNonNullType(getNamedType(typeContext.tableKeyFieldTypes[pos])), tableKeyField);
+          }),
           getNamedType(`${type.name.value}`),
           null
         )
       );
-      fields.push(getOperationFieldDefinition(`list${formattedTypeValue}s`, [], getNamedType(`[${type.name.value}]`), null));
+      fields.push(
+        getOperationFieldDefinition(
+          plural(`list${formattedTypeValue}`),
+          [
+            /* Pagination will work as follows:
+               -> Listing operation returns items based on limit, sort order, etc
+               -> Plus one additional row, which will be placed into nextToken
+               -> nextToken will be a json object / map passed into the next Listing operation
+               -> Fields to use as cursors are defined by tokenFields, which is also the sort order
+               -> The corresponding fields in nextToken values will be checked based on the token field type
+            */
+            getInputValueDefinition(getNonNullType(getNamedType('Int')), 'limit'), // Number of items returned
+            getInputValueDefinition(getNamedType(`${formattedTypeValue}KeysInput`), 'nextToken'), // The row to start from
+            getInputValueDefinition(getListType('String'), 'tokenFields'), // The columns in the row to check, in order
+            getInputValueDefinition(getListType('String'), 'tokenFieldTypes'), // The column types, for comparison logic
+            getInputValueDefinition(getListType('String'), 'sortDirections'), // The column types, for comparison logic
+            getInputValueDefinition(getNamedType('String'), 'filter'),
+          ],
+          getNamedType(`${type.name.value}Connection`),
+          null
+        )
+      );
     }
     return getTypeDefinition(fields, 'Query');
-  }
-
-  /**
-   * Creates a GraphQL connection type for a given GraphQL type, corresponding to a SQL table name.
-   *
-   * @param tableName the name of the SQL table (and GraphQL type).
-   * @returns a type definition node defining the connection type for the provided type name.
-   */
-  getConnectionType(tableName: string): ObjectTypeDefinitionNode {
-    return getTypeDefinition(
-      [getFieldDefinition('items', getNamedType(`[${tableName}]`)), getFieldDefinition('nextToken', getNamedType('String'))],
-      `${tableName}Connection`
-    );
   }
 }

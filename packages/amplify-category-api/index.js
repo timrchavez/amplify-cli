@@ -48,6 +48,7 @@ async function initEnv(context) {
   const rdsClusterIdentifier = 'rdsClusterIdentifier';
   const rdsSecretStoreArn = 'rdsSecretStoreArn';
   const rdsDatabaseName = 'rdsDatabaseName';
+  const rdsDatabaseSchemas = 'rdsDatabaseSchemas';
 
   const { amplify } = context;
 
@@ -127,6 +128,7 @@ async function initEnv(context) {
       teamProviderInfo[currEnv][categories][category][resourceName][rdsClusterIdentifier] = answers.dbClusterArn;
       teamProviderInfo[currEnv][categories][category][resourceName][rdsSecretStoreArn] = answers.secretStoreArn;
       teamProviderInfo[currEnv][categories][category][resourceName][rdsDatabaseName] = answers.databaseName;
+      teamProviderInfo[currEnv][categories][category][resourceName][rdsDatabaseSchemas] = answers.databaseSchemas;
 
       fs.writeFileSync(teamProviderInfoFilePath, JSON.stringify(teamProviderInfo, null, 4));
     })

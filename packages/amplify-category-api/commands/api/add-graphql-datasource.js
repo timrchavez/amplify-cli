@@ -2,7 +2,11 @@ const fs = require('fs-extra');
 const inquirer = require('inquirer');
 const graphql = require('graphql');
 const { RelationalDBSchemaTransformer } = require('graphql-relational-schema-transformer');
-const { RelationalDBTemplateGenerator, AuroraServerlessMySQLDatabaseReader } = require('graphql-relational-schema-transformer');
+const {
+  RelationalDBTemplateGenerator,
+  AuroraServerlessMySQLDatabaseReader,
+  AuroraServerlessPostgreSQLDatabaseReader,
+} = require('graphql-relational-schema-transformer');
 const { mergeTypes } = require('merge-graphql-schemas');
 
 const subcommand = 'add-graphql-datasource';
@@ -14,6 +18,7 @@ const rdsRegion = 'rdsRegion';
 const rdsIdentifier = 'rdsClusterIdentifier';
 const rdsSecretStoreArn = 'rdsSecretStoreArn';
 const rdsDatabaseName = 'rdsDatabaseName';
+const rdsDatabaseSchemas = 'rdsDatabaseSchemas';
 const rdsResourceName = 'rdsResourceName';
 const rdsDatasource = 'rdsDatasource';
 const rdsInit = 'rdsInit';
@@ -26,6 +31,7 @@ module.exports = {
     let resourceName;
     let datasource;
     let databaseName;
+    let databaseEngine;
     const AWS = await getAwsClient(context, 'list');
     return datasourceSelectionPrompt(context, servicesMetadata)
       .then(result => {
@@ -37,11 +43,13 @@ module.exports = {
           return;
         }
 
+        // FIXME: Why are we not passing servicesMetadata here?
         return providerController.addDatasource(context, category, result.datasource);
       })
       .then(answers => {
         resourceName = answers.resourceName; // eslint-disable-line prefer-destructuring
         databaseName = answers.databaseName; // eslint-disable-line prefer-destructuring
+        databaseEngine = answers.databaseEngine; // eslint-disable-line prefer-destructuring
 
         /**
          * Write the new env specific datasource information into
@@ -67,6 +75,7 @@ module.exports = {
         teamProviderInfo[currEnv][categories][category][resourceName][rdsIdentifier] = answers.dbClusterArn;
         teamProviderInfo[currEnv][categories][category][resourceName][rdsSecretStoreArn] = answers.secretStoreArn;
         teamProviderInfo[currEnv][categories][category][resourceName][rdsDatabaseName] = answers.databaseName;
+        teamProviderInfo[currEnv][categories][category][resourceName][rdsDatabaseSchemas] = answers.databaseSchemas;
 
         fs.writeFileSync(teamProviderInfoFilePath, JSON.stringify(teamProviderInfo, null, 4));
 
@@ -77,17 +86,25 @@ module.exports = {
 
         fs.writeFileSync(backendConfigFilePath, JSON.stringify(backendConfig, null, 4));
 
-        /**
-         * Load the MySqlRelationalDBReader
-         */
-        // eslint-disable-next-line max-len
-        const dbReader = new AuroraServerlessMySQLDatabaseReader(
-          answers.region,
-          answers.secretStoreArn,
-          answers.dbClusterArn,
-          answers.databaseName,
-          AWS
-        );
+        let dbReader;
+        if (databaseEngine === 'aurora-mysql') {
+          dbReader = new AuroraServerlessMySQLDatabaseReader(
+            answers.region,
+            answers.secretStoreArn,
+            answers.dbClusterArn,
+            answers.databaseName,
+            AWS
+          );
+        } else if (databaseEngine === 'aurora-postgresql') {
+          dbReader = new AuroraServerlessPostgreSQLDatabaseReader(
+            answers.region,
+            answers.secretStoreArn,
+            answers.dbClusterArn,
+            answers.databaseName,
+            answers.databaseSchemas,
+            AWS
+          );
+        }
 
         /**
          * Instantiate a new Relational Schema Transformer and perform
@@ -107,14 +124,19 @@ module.exports = {
         fs.ensureDirSync(apiDirPath);
         const graphqlSchemaFilePath = `${apiDirPath}/schema.graphql`;
         fs.ensureFileSync(graphqlSchemaFilePath);
-        const graphqlSchemaRaw = fs.readFileSync(graphqlSchemaFilePath, 'utf8');
-        const currGraphQLSchemaDoc = graphql.parse(graphqlSchemaRaw);
+        const graphqlSchemaRaw = fs.readFileSync(graphqlSchemaFilePath, 'utf8').trim();
 
         const rdsGraphQLSchemaDoc = graphqlSchemaContext.schemaDoc;
 
-        const concatGraphQLSchemaDoc = mergeTypes([currGraphQLSchemaDoc, rdsGraphQLSchemaDoc], { all: true });
+        if (graphqlSchemaRaw === '') {
+          const concatGraphQLSchemaDoc = mergeTypes([rdsGraphQLSchemaDoc], { all: true });
+          fs.writeFileSync(graphqlSchemaFilePath, concatGraphQLSchemaDoc, 'utf8');
+        } else {
+          const currGraphQLSchemaDoc = graphql.parse(graphqlSchemaRaw);
+          const concatGraphQLSchemaDoc = mergeTypes([currGraphQLSchemaDoc, rdsGraphQLSchemaDoc], { all: true });
+          fs.writeFileSync(graphqlSchemaFilePath, concatGraphQLSchemaDoc, 'utf8');
+        }
 
-        fs.writeFileSync(graphqlSchemaFilePath, concatGraphQLSchemaDoc, 'utf8');
         const resolversDir = `${projectBackendDirPath}/${category}/${resourceName}/resolvers`;
 
         /**

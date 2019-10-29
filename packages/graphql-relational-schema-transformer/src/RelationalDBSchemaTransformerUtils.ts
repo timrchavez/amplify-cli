@@ -1,6 +1,5 @@
 import {
   Kind,
-  print,
   ObjectTypeDefinitionNode,
   NonNullTypeNode,
   DirectiveNode,
@@ -11,16 +10,12 @@ import {
   InputValueDefinitionNode,
   ValueNode,
   OperationTypeDefinitionNode,
-  SchemaDefinitionNode,
   ArgumentNode,
   ListValueNode,
+  ListTypeNode,
   StringValueNode,
   InputObjectTypeDefinitionNode,
-  DocumentNode,
 } from 'graphql';
-
-const intTypes = [`INTEGER`, `INT`, `SMALLINT`, `TINYINT`, `MEDIUMINT`, `BIGINT`, `BIT`];
-const floatTypes = [`FLOAT`, `DOUBLE`, `REAL`, `REAL_AS_FLOAT`, `DOUBLE PRECISION`, `DEC`, `DECIMAL`, `FIXED`, `NUMERIC`];
 
 /**
  * Creates a non-null type, which is a node wrapped around another type that simply defines it is non-nullable.
@@ -28,7 +23,7 @@ const floatTypes = [`FLOAT`, `DOUBLE`, `REAL`, `REAL_AS_FLOAT`, `DOUBLE PRECISIO
  * @param typeNode the type to be marked as non-nullable.
  * @returns a non-null wrapper around the provided type.
  */
-export function getNonNullType(typeNode: NamedTypeNode): NonNullTypeNode {
+export function getNonNullType(typeNode: NamedTypeNode | ListTypeNode): NonNullTypeNode {
   return {
     kind: Kind.NON_NULL_TYPE,
     type: typeNode,
@@ -52,13 +47,26 @@ export function getNamedType(name: string): NamedTypeNode {
 }
 
 /**
+ * Creates a list type for the schema.
+ *
+ * @param name the name of the type.
+ * @returns a named type with the provided name.
+ */
+export function getListType(name: string): ListTypeNode {
+  return {
+    kind: Kind.LIST_TYPE,
+    type: getNamedType(name),
+  };
+}
+
+/**
  * Creates an input value definition for the schema.
  *
  * @param typeNode the type of the input node.
  * @param name the name of the input.
  * @returns an input value definition node with the provided type and name.
  */
-export function getInputValueDefinition(typeNode: NamedTypeNode | NonNullTypeNode, name: string): InputValueDefinitionNode {
+export function getInputValueDefinition(typeNode: NamedTypeNode | NonNullTypeNode | ListTypeNode, name: string): InputValueDefinitionNode {
   return {
     kind: Kind.INPUT_VALUE_DEFINITION,
     name: {
@@ -103,7 +111,7 @@ export function getOperationFieldDefinition(
  * @param type the type of the field to be created.
  * @returns a field definition node with the provided name and type.
  */
-export function getFieldDefinition(fieldName: string, type: NonNullTypeNode | NamedTypeNode): FieldDefinitionNode {
+export function getFieldDefinition(fieldName: string, type: NonNullTypeNode | NamedTypeNode | ListTypeNode): FieldDefinitionNode {
   return {
     kind: Kind.FIELD_DEFINITION,
     name: {
@@ -232,30 +240,36 @@ export function getArgumentNode(argument: string): ArgumentNode {
 }
 
 /**
- * Given the DB type for a column, make a best effort to select the appropriate GraphQL type for
- * the corresponding field.
+ * Creates a GraphQL connection type for a given GraphQL type, corresponding to a SQL table name.
+ * Accounts for the possibility that `nextToken` is a composite key.
  *
- * @param dbType the SQL column type.
- * @returns the GraphQL field type.
+ * @param name the name of the SQL table (and GraphQL type).
+ * @returns a type definition node defining the connection type for the provided type name.
  */
-export function getGraphQLTypeFromMySQLType(dbType: string): string {
-  const normalizedType = dbType.toUpperCase().split('(')[0];
-  if (`BOOL` == normalizedType) {
-    return `Boolean`;
-  } else if (`JSON` == normalizedType) {
-    return `AWSJSON`;
-  } else if (`TIME` == normalizedType) {
-    return `AWSTime`;
-  } else if (`DATE` == normalizedType) {
-    return `AWSDate`;
-  } else if (`DATETIME` == normalizedType) {
-    return `AWSDateTime`;
-  } else if (`TIMESTAMP` == normalizedType) {
-    return `AWSTimestamp`;
-  } else if (intTypes.indexOf(normalizedType) > -1) {
-    return `Int`;
-  } else if (floatTypes.indexOf(normalizedType) > -1) {
-    return `Float`;
-  }
-  return `String`;
+export function getConnectionTypeDefinition(name: string): ObjectTypeDefinitionNode {
+  return getTypeDefinition(
+    [
+      getFieldDefinition('items', getNamedType(`[${name}]`)),
+      getFieldDefinition('limit', getNamedType('Int')),
+      getFieldDefinition('nextToken', getNamedType(`${name}Keys`)),
+    ],
+    `${name}Connection`
+  );
+}
+
+/**
+ * Creates a GraphQL primary key type for a given GraphQL type, corresponding to a SQL table name.
+ * Accounts for the possibility of composite primary key.
+ *
+ * @param name the name of the SQL table (and GraphQL type).
+ * @param fieldNames the list of primary key column names
+ * @param fieldTypes the list of primary key field types
+ * @returns a type definition node defining the primary type for the provided type name
+ */
+export function getKeysTypeDefinition(name: string, fieldNames: string[], fieldTypes: string[]) {
+  let fields = [];
+  fieldNames.forEach((fieldName, pos) => {
+    fields.push(getFieldDefinition(fieldName, getNamedType(fieldTypes[pos])));
+  });
+  return getTypeDefinition(fields, `${name}Keys`);
 }

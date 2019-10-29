@@ -148,6 +148,7 @@ async function migrateResource(context, projectPath, service, resourceName) {
 }
 
 function addDatasource(context, category, datasource) {
+  // FIXME: Why was this not passed in as a parameter?
   serviceMetadata = context.amplify.readJsonFile(`${__dirname}/../supported-datasources.json`)[datasource];
   const { defaultValuesFilename, serviceWalkthroughFilename } = serviceMetadata;
   return serviceQuestions(context, defaultValuesFilename, serviceWalkthroughFilename);
